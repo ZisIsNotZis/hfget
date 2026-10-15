@@ -16,3 +16,6 @@ worktrees/
 .env.*
 !.env.example
 *.log
+
+# Locally downloaded model weights
+*.gguf
