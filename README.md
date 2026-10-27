@@ -52,7 +52,7 @@ Everything lives in one file on purpose:
 ```
 hfget.py
 ├── CONFIG        search term, quant rules, size/MTP/mmproj preferences, retries
-├── Discovery     list_models → pipeline-tag filter → model_info (with rescan)
+├── Discovery     list_models → pipeline-tag filter → model_info (with retry)
 ├── Selection     group_shards → score_main_quant → median-size cut → companions
 └── Download      dry-run report, confirmation, ThreadPoolExecutor
 ```
@@ -78,7 +78,7 @@ There is no build step, test suite or CI; the script is the whole product. When 
 
 ## How to contribute
 
-Issues and pull requests are welcome. Keep the project a single readable script, test selection changes with `--dry-run --debug`, and never commit downloaded `.gguf` files (they are already ignored). If a change depends on a new Hugging Face API behavior, describe the observed response in the issue or PR.
+Issues and pull requests are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md) for scope, how to check a change, and what a reviewable PR looks like.
 
 ## Roadmap
 

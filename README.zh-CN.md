@@ -52,7 +52,7 @@ python3 hfget.py
 ```
 hfget.py
 ├── CONFIG        搜索词、量化规则、尺寸/MTP/mmproj 偏好、重试参数
-├── Discovery     list_models → pipeline 标签过滤 → model_info（带重试）
+├── Discovery     list_models → pipeline 标签过滤 → model_info（失败重试）
 ├── Selection     group_shards → score_main_quant → 中位数过滤 → 配套文件
 └── Download      dry-run 报告、确认、ThreadPoolExecutor
 ```
@@ -78,7 +78,7 @@ python3 hfget.py --dry-run --target 5 --debug
 
 ## 如何贡献
 
-欢迎提交 issue 和 pull request。请让项目保持为一个易读的单文件脚本，用 `--dry-run --debug` 验证选择逻辑的改动，并且不要提交下载下来的 `.gguf` 文件（它们已被忽略）。如果改动依赖 Hugging Face API 的新行为，请在 issue 或 PR 中描述你观察到的响应。
+欢迎提交 issue 和 pull request——范围、如何验证改动、什么样的 PR 更容易合入，都写在 [`CONTRIBUTING.md`](CONTRIBUTING.md) 里。
 
 ## 路线图
 
