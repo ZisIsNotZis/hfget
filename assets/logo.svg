@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-labelledby="title">
+  <title id="title">hfget</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1d4ed8"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#bg)"/>
+  <g fill="#ffffff">
+    <rect x="26" y="26" width="76" height="11" rx="5.5" opacity="0.95"/>
+    <rect x="34" y="44" width="60" height="11" rx="5.5" opacity="0.72"/>
+    <rect x="42" y="62" width="44" height="11" rx="5.5" opacity="0.5"/>
+  </g>
+  <g fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M64 82v24"/>
+    <path d="M52 96l12 12 12-12"/>
+  </g>
+</svg>
