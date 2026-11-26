@@ -3,9 +3,19 @@ import re
 import argparse
 import time
 import statistics
+import os
+import sys
 from typing import List, Optional, Dict, Tuple
-from huggingface_hub import list_models, hf_hub_download, HfApi
-from requests.exceptions import RequestException
+
+REAL_CLIENT_IMPORT_ERROR = None
+try:
+    from huggingface_hub import list_models, hf_hub_download, HfApi
+    from requests.exceptions import RequestException
+    OFFLINE_MODE = False
+except ImportError as _exc:  # no real client installed; see main() and selftest.py
+    REAL_CLIENT_IMPORT_ERROR = _exc
+    list_models = hf_hub_download = HfApi = RequestException = None
+    OFFLINE_MODE = True
 
 # -------------------------- CONFIG --------------------------
 MAX_PARAM_FILTER = "max:36B"
@@ -33,7 +43,7 @@ API_RETRY_COUNT = 2
 API_RETRY_DELAY = 1.0
 API_INTER_REPO_DELAY = 0.4
 # -------------------------------------------------------------
-api = HfApi()
+api = HfApi() if HfApi is not None else None  # real client is built in main() when offline
 SHARD_PATTERN = re.compile(r"(.*)-(\d{5})-of-(\d{5})\.gguf", re.IGNORECASE)
 
 def score_main_quant(filename: str) -> tuple[int, str]:
@@ -53,6 +63,13 @@ def score_main_quant(filename: str) -> tuple[int, str]:
     total = quant_score + size_bonus
     return total, matched_tag
 
+COMPANION_PATTERN = re.compile(r"[\s._/-](mtp|mmproj|dspark2)(?=[\s._/-]|$)|^(mtp|mmproj|dspark2)[\s._/-]", re.IGNORECASE)
+
+def is_companion_name(filename: str) -> bool:
+    """Companion files are named as a whole token, not a substring."""
+    stem = filename.rsplit("/", 1)[-1]
+    return bool(COMPANION_PATTERN.search(stem))
+
 def group_shards(siblings) -> List[dict]:
     shard_groups: Dict[str, dict] = {}
     single_gguf = []
@@ -67,9 +84,11 @@ def group_shards(siblings) -> List[dict]:
                     "prefix": prefix,
                     "files": [],
                     "total_shards": int(total_str),
+                    "declared_totals": set(),
                     "sum_size": 0,
                 }
             shard_groups[prefix_key]["files"].append(f)
+            shard_groups[prefix_key]["declared_totals"].add(int(total_str))
             shard_groups[prefix_key]["sum_size"] += f.size if f.size is not None else 0
         elif rn.lower().endswith(".gguf"):
             single_gguf.append(f)
@@ -84,16 +103,57 @@ def group_shards(siblings) -> List[dict]:
             "prefix": f.rfilename,
             "files": [f],
             "total_shards": 1,
+            "declared_totals": {1},
             "sum_size": f.size if f.size is not None else 0,
         })
     return groups_out
 
-def select_best_main_quant(siblings) -> List[str]:
+def group_problem(g: dict) -> Optional[str]:
+    """Why this shard group cannot be downloaded as a whole (None = complete)."""
+    files = g["files"]
+    name = files[0].rfilename
+    matches = [SHARD_PATTERN.match(f.rfilename) for f in files]
+    if not any(matches):
+        # Single-file quantization (or a name that only looks shard-like):
+        # nothing to be incomplete about, the file is downloadable as is.
+        return None
+    if not all(matches):
+        return f"{name}: group mixes shard and non-shard files"
+    totals = {int(m.groups()[2]) for m in matches} | set(g.get("declared_totals") or [])
+    if len(totals) > 1:
+        shown = ", ".join(f"of-{n:05d}" for n in sorted(totals))
+        return f"{name}: shards mix different totals ({shown})"
+    total = totals.pop()
+    if total < 1:
+        return f"{name}: declares of-{total:05d}, not a valid shard set"
+    indices = {int(m.groups()[1]) for m in matches}
+    if len(indices) != len(files):
+        dup = len(files) - len(indices)
+        return f"{name}: {dup} duplicate shard(s), {len(indices)} distinct of {total}"
+    if indices != set(range(1, total + 1)):
+        missing = len(set(range(1, total + 1)) - indices)
+        return f"{name}: {missing} shard(s) missing, {len(indices)} of {total} present"
+    return None
+
+def select_best_main_quant(siblings, rejected: Optional[List[str]] = None) -> List[str]:
     groups = group_shards(siblings)
-    scored_groups = []
+    complete = []
     for g in groups:
-        sample_name = g["files"][0].rfilename
-        score, tag = score_main_quant(sample_name)
+        problem = group_problem(g)
+        if problem:
+            if rejected is not None:
+                rejected.append(problem)
+        else:
+            complete.append(g)
+    # A companion file (mtp / mmproj / dspark2) is not the model. Only when a
+    # repo ships nothing else do we fall back to it, so a repo never loses its
+    # only downloadable file because of naming.
+    real_quants = [g for g in complete if not is_companion_name(g["files"][0].rfilename)]
+    if real_quants:
+        complete = real_quants
+    scored_groups = []
+    for g in complete:
+        score, tag = score_main_quant(g["files"][0].rfilename)
         sum_sz = g["sum_size"] if g["sum_size"] is not None else 0
         scored_groups.append((score, sum_sz, g))
     if not scored_groups:
@@ -174,7 +234,10 @@ def fetch_model_candidates(target_count: int, dry_run: bool, debug: bool = False
             print(f"Skip {repo_id}: failed fetch siblings, err: {e}")
             continue
 
-        main_set = select_best_main_quant(siblings)
+        rejected_main = []
+        main_set = select_best_main_quant(siblings, rejected=rejected_main)
+        for problem in rejected_main:
+            print(f"Skip {repo_id}: incomplete shard set -> {problem}")
 
         # MTP rule: any main file contains mtp → skip standalone mtp
         has_combined_mtp = any("mtp" in fname.lower() for fname in main_set)
@@ -245,7 +308,6 @@ def fetch_model_candidates(target_count: int, dry_run: bool, debug: bool = False
     return candidates
 
 def download_repo_files(item):
-    from huggingface_hub import hf_hub_download
     repo_id = item["repo"]
     files = []
     files.extend(item["main_quant_files"])
@@ -272,14 +334,38 @@ def main():
     parser.add_argument("--target", type=int, default=20, help="Target valid models, api-limit = target")
     parser.add_argument("--max-concurrent", type=int, default=4)
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--offline-fixtures", metavar="STATE_JSON", default=None,
+                        help="TESTING ONLY: serve synthetic repos from STATE_JSON instead of Hugging Face")
     args = parser.parse_args()
 
+    if OFFLINE_MODE and not args.offline_fixtures:
+        print("hfget: real Hugging Face client unavailable: " + str(REAL_CLIENT_IMPORT_ERROR),
+              file=sys.stderr)
+        print("hfget: refusing to query a fake backend. install the client first:",
+              file=sys.stderr)
+        print("        pip install huggingface_hub requests", file=sys.stderr)
+        return 2
+    if args.offline_fixtures:
+        # Test-only backend, reachable solely through this flag; see selftest.py.
+        import hfget_offline
+        global api, list_models, hf_hub_download, HfApi, RequestException
+        list_models, hf_hub_download = hfget_offline.list_models, hfget_offline.hf_hub_download
+        HfApi, RequestException = hfget_offline.HfApi, hfget_offline.RequestException
+        hfget_offline.STATE_FILE = os.path.abspath(args.offline_fixtures)
+        api = HfApi()
+        print("!! OFFLINE FIXTURES: results come from synthetic test data, NOT Hugging Face !!")
+    elif api is None:
+        api = HfApi()
     candidates = fetch_model_candidates(args.target, dry_run=args.dry_run, debug=args.debug)
 
+    if args.offline_fixtures and not args.dry_run:
+        print("offline fixtures mode never downloads; use --dry-run.")
+        return 2
     if not args.dry_run:
         confirm = input("\nStart downloads? [y/N] ")
         if confirm.strip().lower() == "y":
             start_downloads(candidates, args.max_concurrent)
+    return 0
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
