@@ -9,6 +9,8 @@
 
 # hfget
 
+**项目状态 · 未完成（2026-11-26）**。真实 Hugging Face dry-run 在 2 个仓上成功。合成测试中它选择了只下载到首片的两片量化，违反「完整分片集」承诺，即使有完整低优先回退。 遇缺片、重复片和总片数不一致时跳过分片组，保证选择完整可用的模型集合。
+
 **Find the GGUF quantization you actually want, then download it — shards, mmproj and companions included.**
 
 *A single-file Python CLI that searches Hugging Face under a parameter budget, ranks quantizations with rules you control, and downloads the winners in parallel.*
